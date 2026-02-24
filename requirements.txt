@@ -1,0 +1,7 @@
+RealtimeSTT
+keyboard
+PyQt6
+qdarkstyle
+PyQt6-WebEngine
+pyaudio
+numpy
