@@ -10,7 +10,7 @@ import numpy as np
 from RealtimeSTT import AudioToTextRecorder
 from PyQt6.QtCore import QThread, pyqtSignal, QObject, Qt, pyqtProperty, QPropertyAnimation, QUrl, QTimer
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QPushButton, QLabel, QScrollArea, QFrame, QSizePolicy, QSystemTrayIcon, QMenu, QComboBox, QMessageBox, QProgressBar)
+                             QPushButton, QLabel, QScrollArea, QFrame, QSizePolicy, QSystemTrayIcon, QMenu, QComboBox, QMessageBox, QProgressBar, QTextEdit)
 from PyQt6.QtGui import QIcon, QFont, QColor, QPalette, QDesktopServices
 import qdarkstyle
 
@@ -209,10 +209,34 @@ class HistoryItemWidget(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         
-        # Text label (word wrapped)
-        self.text_label = QLabel(self.text)
-        self.text_label.setWordWrap(True)
-        self.text_label.setStyleSheet("color: #e0e0e0; font-size: 14px;")
+        # Text area (scrollable)
+        self.text_area = QTextEdit()
+        self.text_area.setPlainText(self.text)
+        self.text_area.setReadOnly(True)
+        self.text_area.setMaximumHeight(150)
+        self.text_area.setStyleSheet("""
+            QTextEdit {
+                color: #e0e0e0;
+                font-size: 14px;
+                background-color: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #1e1e1e;
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #4a4a4a;
+                min-height: 20px;
+                border-radius: 4px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+            }
+        """)
         
         # Bottom row: metadata + actions
         bottom_layout = QHBoxLayout()
@@ -244,7 +268,7 @@ class HistoryItemWidget(QFrame):
         
         bottom_layout.addWidget(self.copy_btn)
         
-        layout.addWidget(self.text_label)
+        layout.addWidget(self.text_area)
         layout.addLayout(bottom_layout)
 
     def copy_to_clipboard(self):
