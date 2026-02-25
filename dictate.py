@@ -117,7 +117,7 @@ class DictationEngine(QThread):
                     frames_per_buffer=512,
                     input_device_index=self.device_index
                 )
-                winsound.PlaySound(START_SOUND, winsound.SND_ALIAS)
+                winsound.PlaySound(START_SOUND, winsound.SND_ALIAS | winsound.SND_ASYNC)
             except Exception as e:
                 print(f"\n[ERROR] Failed to open microphone: {e}")
                 self.recording_state = False
@@ -130,7 +130,7 @@ class DictationEngine(QThread):
             if self.recorder:
                 self.recorder.start()
         else:
-            winsound.PlaySound(STOP_SOUND, winsound.SND_ALIAS)
+            winsound.PlaySound(STOP_SOUND, winsound.SND_ALIAS | winsound.SND_ASYNC)
             print("\n[STOPPED RECORDING, Transcribing...]")
             self.state_changed.emit(False) # Indicate processing/stopping
             
