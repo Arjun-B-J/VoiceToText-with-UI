@@ -2,14 +2,15 @@ import os
 import sys
 import time
 import threading
+from datetime import datetime
 import keyboard
 import winsound
 import pyaudio
 import numpy as np
 from RealtimeSTT import AudioToTextRecorder
-from PyQt6.QtCore import QThread, pyqtSignal, QObject, Qt, pyqtProperty, QPropertyAnimation, QUrl
+from PyQt6.QtCore import QThread, pyqtSignal, QObject, Qt, pyqtProperty, QPropertyAnimation, QUrl, QTimer
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QPushButton, QLabel, QScrollArea, QFrame, QSizePolicy, QSystemTrayIcon, QMenu, QComboBox, QMessageBox)
+                             QPushButton, QLabel, QScrollArea, QFrame, QSizePolicy, QSystemTrayIcon, QMenu, QComboBox, QMessageBox, QProgressBar)
 from PyQt6.QtGui import QIcon, QFont, QColor, QPalette, QDesktopServices
 import qdarkstyle
 
@@ -26,6 +27,7 @@ class DictationEngine(QThread):
     transcription_ready = pyqtSignal(str)
     state_changed = pyqtSignal(bool) # True for recording, False for idle
     engine_ready = pyqtSignal()
+    audio_level_changed = pyqtSignal(float)  # 0.0 to 1.0 normalized level
     
     def __init__(self, device_index=None):
         super().__init__()
@@ -79,6 +81,14 @@ class DictationEngine(QThread):
                 chunk = np.frombuffer(data, dtype=np.int16)
                 if self.recorder:
                     self.recorder.feed_audio(chunk)
+                
+                # Calculate audio level for the visualizer
+                if len(chunk) > 0:
+                    # RMS level, normalized to 0.0-1.0 range
+                    rms = np.sqrt(np.mean(chunk.astype(np.float32) ** 2))
+                    # Normalize: typical speech RMS is ~1000-5000 out of 32768
+                    level = min(1.0, rms / 5000.0)
+                    self.audio_level_changed.emit(level)
         except Exception as e:
             print(f"Error reading audio stream: {e}")
 
@@ -116,6 +126,8 @@ class DictationEngine(QThread):
             self.state_changed.emit(False) # Indicate processing/stopping
             
             self.recording_state = False
+            # Reset audio level
+            self.audio_level_changed.emit(0.0)
             
             if self.recorder:
                 self.recorder.stop()
@@ -165,6 +177,8 @@ class HistoryItemWidget(QFrame):
     def __init__(self, text, parent=None):
         super().__init__(parent)
         self.text = text
+        self.timestamp = datetime.now().strftime("%I:%M %p")
+        self.word_count = len(text.split())
         self.init_ui()
 
     def init_ui(self):
@@ -188,9 +202,16 @@ class HistoryItemWidget(QFrame):
         self.text_label.setWordWrap(True)
         self.text_label.setStyleSheet("color: #e0e0e0; font-size: 14px;")
         
-        # Actions row
-        actions_layout = QHBoxLayout()
-        actions_layout.addStretch()
+        # Bottom row: metadata + actions
+        bottom_layout = QHBoxLayout()
+        
+        # Timestamp & word count
+        meta_text = f"🕐 {self.timestamp}  •  {self.word_count} word{'s' if self.word_count != 1 else ''}"
+        meta_label = QLabel(meta_text)
+        meta_label.setStyleSheet("color: #888888; font-size: 11px;")
+        bottom_layout.addWidget(meta_label)
+        
+        bottom_layout.addStretch()
         
         self.copy_btn = QPushButton("Copy")
         self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -209,10 +230,10 @@ class HistoryItemWidget(QFrame):
         """)
         self.copy_btn.clicked.connect(self.copy_to_clipboard)
         
-        actions_layout.addWidget(self.copy_btn)
+        bottom_layout.addWidget(self.copy_btn)
         
         layout.addWidget(self.text_label)
-        layout.addWidget(self.copy_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        layout.addLayout(bottom_layout)
 
     def copy_to_clipboard(self):
         clipboard = QApplication.clipboard()
@@ -249,6 +270,7 @@ class DictationWindow(QMainWindow):
         self.engine.transcription_ready.connect(self.on_transcription_ready)
         self.engine.state_changed.connect(self.on_state_changed)
         self.engine.engine_ready.connect(self.on_engine_ready)
+        self.engine.audio_level_changed.connect(self.on_audio_level_changed)
         
         # Start Engine
         self.engine.start()
@@ -275,6 +297,28 @@ class DictationWindow(QMainWindow):
         header_layout.addWidget(title_label)
         
         header_layout.addStretch()
+        
+        # Clear History Button
+        self.clear_btn = QPushButton("Clear All")
+        self.clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_btn.setToolTip("Clear all dictation history")
+        self.clear_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid #555;
+                border-radius: 4px;
+                padding: 4px 10px;
+                color: #aaa;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #d32f2f;
+                color: white;
+                border: 1px solid #d32f2f;
+            }
+        """)
+        self.clear_btn.clicked.connect(self.clear_history)
+        header_layout.addWidget(self.clear_btn)
         
         # Mic Selector
         self.mic_combo = QComboBox()
@@ -319,6 +363,27 @@ class DictationWindow(QMainWindow):
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
         main_layout.addLayout(status_layout)
+        
+        # Audio Level Indicator
+        self.audio_level_bar = QProgressBar()
+        self.audio_level_bar.setRange(0, 100)
+        self.audio_level_bar.setValue(0)
+        self.audio_level_bar.setTextVisible(False)
+        self.audio_level_bar.setFixedHeight(6)
+        self.audio_level_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #1e1e1e;
+                border: none;
+                border-radius: 3px;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #4caf50, stop:0.6 #ffeb3b, stop:1.0 #f44336);
+                border-radius: 3px;
+            }
+        """)
+        self.audio_level_bar.setVisible(False)  # Hidden when not recording
+        main_layout.addWidget(self.audio_level_bar)
         
         # Scroll Area for history
         self.scroll_area = QScrollArea()
@@ -437,22 +502,45 @@ class DictationWindow(QMainWindow):
         if is_recording:
             self.status_label.setText("Listening...")
             self.status_label.setStyleSheet("color: #ff5252; font-weight: bold;")
+            self.audio_level_bar.setVisible(True)
+            self.audio_level_bar.setValue(0)
         else:
             self.status_label.setText("Processing / Ready")
             self.status_label.setStyleSheet("color: #4caf50; font-weight: bold;")
+            self.audio_level_bar.setVisible(False)
+            self.audio_level_bar.setValue(0)
+    
+    def on_audio_level_changed(self, level):
+        # Smooth the level display (0.0 to 1.0 -> 0 to 100)
+        self.audio_level_bar.setValue(int(level * 100))
             
     def type_text(self, text):
-        # Type the text using keyboard
-        time.sleep(0.5) 
-        keyboard.write(text + " ")
+        # Type the text using keyboard with error handling
+        time.sleep(0.5)
+        try:
+            keyboard.write(text + " ")
+        except Exception as e:
+            print(f"[WARNING] keyboard.write() failed: {e}")
+            print("[INFO] Text was auto-copied to clipboard. Use Ctrl+V to paste.")
 
     def on_transcription_ready(self, text):
         # Insert a new history widget
         item = HistoryItemWidget(text)
         self.history_layout.insertWidget(0, item)
         
+        # Auto-copy to clipboard
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
+        
         # Also type it out
         threading.Thread(target=self.type_text, args=(text,), daemon=True).start()
+    
+    def clear_history(self):
+        # Remove all history items
+        while self.history_layout.count():
+            child = self.history_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
 
     def changeEvent(self, event):
         from PyQt6.QtCore import QEvent

@@ -10,6 +10,11 @@ A modern, GUI-driven AI dictation app powered by `RealtimeSTT` and OpenAI's Whis
 - **Background Mode**: Minimizes to the system tray so it is always ready to use without cluttering your taskbar.
 - **Graceful VRAM Clearance**: When the app is closed, it forcefully triggers resource cleanup to ensure no background threads hang onto your massive NVIDIA VRAM allocation.
 - **Smart Sounds**: Uses soft Windows system sounds to notify you exactly when the microphone starts and stops recording.
+- **Timestamped History**: Each dictation entry shows the time it was recorded and its word count.
+- **Clear History**: A "Clear All" button in the header lets you wipe the history list when it gets long.
+- **Live Audio Level**: A real-time volume meter bar appears while recording so you can confirm the mic is picking up your voice.
+- **Auto-Copy to Clipboard**: Every transcription is automatically copied to your clipboard, useful for apps where `keyboard.write()` doesn't work — just Ctrl+V to paste.
+- **Error Resilience**: If typing into the focused window fails, the text is still available in your clipboard and history.
 
 ## Prerequisites
 - A compatible NVIDIA GPU (tested on RTX 5090) for utilizing the `large-v3` model locally without latency.
