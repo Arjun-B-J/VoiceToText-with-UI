@@ -14,6 +14,12 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
 from PyQt6.QtGui import QIcon, QFont, QColor, QPalette, QDesktopServices
 import qdarkstyle
 
+# Fix for pythonw.exe (no console = sys.stdout is None)
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w')
+
 # --- Configuration ---
 HOTKEY = 'alt+k'
 
@@ -42,23 +48,26 @@ class DictationEngine(QThread):
 
     def run(self):
         # Initialize the recorder with powerful settings in the background
-        self.recorder = AudioToTextRecorder(
-            model="large-v3",
-            language="en",
-            device="cuda",
-            compute_type="float16",
-            silero_use_onnx=True,
-            spinner=False,
-            use_microphone=False
-        )
-        self.engine_ready.emit()
-        
-        # Setup the global hotkey
-        keyboard.add_hotkey(HOTKEY, self.toggle_recording)
-        
-        # Keep the thread alive to listen for hotkeys
-        while self._is_running:
-            time.sleep(0.1)
+        try:
+            self.recorder = AudioToTextRecorder(
+                model="large-v3",
+                language="en",
+                device="cuda",
+                compute_type="default",
+                silero_use_onnx=True,
+                spinner=False,
+                use_microphone=False
+            )
+            self.engine_ready.emit()
+            
+            # Setup the global hotkey
+            keyboard.add_hotkey(HOTKEY, self.toggle_recording)
+            
+            # Keep the thread alive to listen for hotkeys
+            while self._is_running:
+                time.sleep(0.1)
+        except Exception as e:
+            print(f"Error during engine initialization: {e}")
             
     def shutdown(self):
         self._is_running = False
@@ -145,12 +154,15 @@ class DictationEngine(QThread):
                 self.audio_interface = None
                 
             if self.recorder:
-                text = self.recorder.text()
-                if text:
-                    print(f"Transcription: {text}")
-                    self.transcription_ready.emit(text)
-                else:
-                    print("No speech detected.")
+                try:
+                    text = self.recorder.text()
+                    if text:
+                        print(f"Transcription: {text}")
+                        self.transcription_ready.emit(text)
+                    else:
+                        print("No speech detected.")
+                except Exception as e:
+                    print(f"Error transcribing: {e}")
 
 def get_microphones():
     p = pyaudio.PyAudio()
@@ -243,7 +255,7 @@ class HistoryItemWidget(QFrame):
         # Reset text after a second
         def reset():
             self.copy_btn.setText("Copy")
-        threading.Timer(1.5, reset).start()
+        QTimer.singleShot(1500, reset)
 
 
 class DictationWindow(QMainWindow):
@@ -390,7 +402,7 @@ class DictationWindow(QMainWindow):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setStyleSheet("""
             QScrollArea {
-                border: none;
+                border: 1px solid transparent;
                 background-color: transparent;
             }
             QScrollBar:vertical {
@@ -416,7 +428,7 @@ class DictationWindow(QMainWindow):
         self.history_layout.setSpacing(10)
         
         self.scroll_area.setWidget(self.history_container)
-        main_layout.addWidget(self.scroll_area)
+        main_layout.addWidget(self.scroll_area, 1)  # Give scroll area stretch factor of 1
         
         # Main control button
         self.toggle_btn = QPushButton(f"Start Dictation ({HOTKEY.upper()})")
@@ -493,11 +505,19 @@ class DictationWindow(QMainWindow):
         self.status_label.setText("Microphone changed.")
             
     def on_engine_ready(self):
+        # We use QTimer.singleShot to ensure UI updates happen on the main thread
+        QTimer.singleShot(0, self._update_engine_ready_ui)
+        
+    def _update_engine_ready_ui(self):
         self.status_label.setText("Engine Ready")
         self.status_label.setStyleSheet("color: #4caf50; font-weight: bold;")
         self.toggle_btn.setEnabled(True)
         
     def on_state_changed(self, is_recording):
+        # Ensure UI updates happen on the main thread
+        QTimer.singleShot(0, lambda: self._update_state_ui(is_recording))
+        
+    def _update_state_ui(self, is_recording):
         self.update_btn_style(is_recording)
         if is_recording:
             self.status_label.setText("Listening...")
@@ -512,7 +532,7 @@ class DictationWindow(QMainWindow):
     
     def on_audio_level_changed(self, level):
         # Smooth the level display (0.0 to 1.0 -> 0 to 100)
-        self.audio_level_bar.setValue(int(level * 100))
+        QTimer.singleShot(0, lambda: self.audio_level_bar.setValue(int(level * 100)))
             
     def type_text(self, text):
         # Type the text using keyboard with error handling
